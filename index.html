@@ -1,292 +1,227 @@
 <!DOCTYPE html>
 <html lang="sv">
 <head>
-  <meta charset="UTF-8" />
-  <title>Skateboard Shooter</title>
-  <!-- Laddar Pixi.js via CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/pixi.js@7/dist/browser/pixi.min.js"></script>
+    <meta charset="UTF-8" />
+    <title>Mini 3D Shooter (Fortnite-liknande demo)</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
 
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      background: #333;
-      overflow: hidden; /* Dölj scrollbars */
-    }
-    #game-container {
-      /* Pixi kommer att injicera sin canvas här */
-      width: 100vw;
-      height: 100vh;
-    }
-    .hud {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      color: #fff;
-      font-family: sans-serif;
-      font-size: 20px;
-    }
-  </style>
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #fff;
+            font-family: sans-serif;
+            font-size: 16px;
+            z-index: 9999;
+        }
+
+        #hp {
+            position: absolute;
+            top: 40px;
+            left: 10px;
+            color: #fff;
+            font-size: 20px;
+            font-weight: bold;
+        }
+    </style>
 </head>
 <body>
-  <div id="game-container"></div>
-  <div class="hud" id="hp">HP: 100</div>
-  
-  <script>
-    // === Skapa Pixi-applikation ===
-    const app = new PIXI.Application({
-      width: window.innerWidth,
-      height: window.innerHeight,
-      backgroundColor: 0x1099bb,
-      antialias: true,
-    });
-    document.getElementById('game-container').appendChild(app.view);
+    <div id="info">
+        <p>Klicka för att låsa musen &amp; styra spelaren (WASD + mus).</p>
+        <p>Skjut med vänster musknapp.</p>
+    </div>
+    <div id="hp">HP: 100</div>
 
-    // === Konstanter för spelet ===
-    const PLAYER_SPEED = 5;         // Hastighet när spelaren rör sig med piltangenter
-    const BULLET_SPEED = 10;        // Hastighet för kulor
-    const ENEMY_SPEED = 4;          // Hastighet för fiender
-    const ENEMY_SPAWN_INTERVAL = 60; // Bildrutor mellan fiendespawns
-    const PLAYER_MAX_HP = 100;
+    <!-- Ladda ner en aktuell version av Three.js från CDN. -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.154.0/examples/js/controls/PointerLockControls.js"></script>
 
-    // === Variabler och containers ===
-    let keys = {};                  // Tangenttryck
-    let playerHP = PLAYER_MAX_HP;
-    let enemySpawnCounter = 0;      // Räknare för när vi ska spawna fiender
-    
-    // Sprites/Containers
-    const bullets = [];             // Array för spelarens kulor
-    const enemyBullets = [];        // Array för fiendens kulor
-    const enemies = [];             // Array för fiender
-    
-    // === Skapa en bakgrund som "scrollar" ===
-    // Vi kan använda en TilingSprite för att simulera rörelse.
-    const textureBG = PIXI.Texture.WHITE; // En vit ruta
-    const background = new PIXI.TilingSprite(
-      textureBG,
-      app.screen.width,
-      app.screen.height
-    );
-    background.tint = 0x333333; // Mörkare färg
-    app.stage.addChild(background);
+    <script>
+        // === Grundläggande setup för scen, kamera och renderer ===
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb); // Ljusblå himmel
 
-    // === Spelar-sprite (en enkel rektangel i Pixi) ===
-    const player = new PIXI.Graphics();
-    player.beginFill(0x00ff00);
-    player.drawRect(-25, -50, 50, 100); // En rektangel, centrerad
-    player.endFill();
-    player.x = app.screen.width / 2;
-    player.y = app.screen.height - 150; // Längre ner på skärmen
-    app.stage.addChild(player);
+        const camera = new THREE.PerspectiveCamera(
+            75,
+            window.innerWidth / window.innerHeight,
+            0.1,
+            1000
+        );
 
-    // === Huvud-loop (ticker) i Pixi ===
-    app.ticker.add((delta) => {
-      // 1. Uppdatera bakgrundens "tiles" för att få scroll-effekt
-      background.tilePosition.y += 2;
+        // Renderer skapar en <canvas> och ritar 3D-grafik
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
 
-      // 2. Läs av tangenttryck och styr spelaren
-      handlePlayerMovement();
+        // === PointerLockControls för att styra spelaren som i ett FPS-spel ===
+        const controls = new THREE.PointerLockControls(camera, renderer.domElement);
+        document.addEventListener('click', () => {
+            controls.lock();
+        });
 
-      // 3. Uppdatera alla kulor (både spelarens och fiendernas)
-      updateBullets();
+        // Kamerans startposition
+        camera.position.set(0, 2, 5);  // lite ovan marken (y=2)
 
-      // 4. Spawna fiender med ett intervall
-      spawnEnemies();
+        // Variabler för spelarens rörelse (WASD)
+        let moveForward = false;
+        let moveBackward = false;
+        let moveLeft = false;
+        let moveRight = false;
+        const playerSpeed = 0.1; // justera hastighet
 
-      // 5. Uppdatera fiender och kolla kollisioner
-      updateEnemies();
-
-      // 6. Uppdatera HUD (HP)
-      document.getElementById('hp').innerText = `HP: ${playerHP}`;
-
-      // 7. Kolla om spelaren dött
-      if (playerHP <= 0) {
-        gameOver();
-      }
-    });
-
-    // === Hantera tangenttryckning (piltangenter & space) ===
-    window.addEventListener("keydown", (e) => {
-      keys[e.code] = true;
-      // Om space trycks, skjut kula
-      if (e.code === "Space") {
-        shootBullet();
-      }
-    });
-    window.addEventListener("keyup", (e) => {
-      keys[e.code] = false;
-    });
-
-    // === Flytta spelaren baserat på vilka tangenter som är nedtryckta ===
-    function handlePlayerMovement() {
-      // Vänster/Höger
-      if (keys["ArrowLeft"]) {
-        player.x -= PLAYER_SPEED;
-      } else if (keys["ArrowRight"]) {
-        player.x += PLAYER_SPEED;
-      }
-      // Upp/Ner
-      if (keys["ArrowUp"]) {
-        player.y -= PLAYER_SPEED;
-      } else if (keys["ArrowDown"]) {
-        player.y += PLAYER_SPEED;
-      }
-      // Begränsa spelaren inom skärmens gränser
-      if (player.x < 0) player.x = 0;
-      if (player.x > app.screen.width) player.x = app.screen.width;
-      if (player.y < 0) player.y = 0;
-      if (player.y > app.screen.height) player.y = app.screen.height;
-    }
-
-    // === Spelaren skjuter en kula ===
-    function shootBullet() {
-      const bullet = new PIXI.Graphics();
-      bullet.beginFill(0xffff00);
-      bullet.drawCircle(0, 0, 5);
-      bullet.endFill();
-      bullet.x = player.x;
-      bullet.y = player.y - 50; // Precis framför spelaren
-      app.stage.addChild(bullet);
-      bullets.push(bullet);
-    }
-
-    // === Uppdatera position för kulor och ta bort dem om de är utanför skärmen ===
-    function updateBullets() {
-      // Spelarens kulor
-      for (let i = bullets.length - 1; i >= 0; i--) {
-        bullets[i].y -= BULLET_SPEED;
-        if (bullets[i].y < 0) {
-          app.stage.removeChild(bullets[i]);
-          bullets.splice(i, 1);
-        }
-      }
-      // Fienders kulor
-      for (let i = enemyBullets.length - 1; i >= 0; i--) {
-        enemyBullets[i].y += BULLET_SPEED * 0.8; // Fiendens kulor kan vara lite långsammare
-        // Om fiendekulan träffar spelaren
-        if (hitTest(enemyBullets[i], player)) {
-          playerHP -= 10;
-          removeEnemyBullet(i);
-          continue; // Hoppa över resten av loopen
-        }
-        // Ta bort kula om den är utanför skärmen
-        if (enemyBullets[i].y > app.screen.height) {
-          removeEnemyBullet(i);
-        }
-      }
-    }
-
-    // === Hjälpfunktion för att ta bort fiende-kula ===
-    function removeEnemyBullet(index) {
-      app.stage.removeChild(enemyBullets[index]);
-      enemyBullets.splice(index, 1);
-    }
-
-    // === Spawna fiender med ett intervall ===
-    function spawnEnemies() {
-      enemySpawnCounter++;
-      if (enemySpawnCounter > ENEMY_SPAWN_INTERVAL) {
-        enemySpawnCounter = 0;
-        createEnemy();
-      }
-    }
-
-    // === Skapa en fiende (en enkel röd rektangel) ===
-    function createEnemy() {
-      const enemy = new PIXI.Graphics();
-      enemy.beginFill(0xff0000);
-      enemy.drawRect(-25, -50, 50, 100);
-      enemy.endFill();
-      enemy.x = Math.random() * (app.screen.width - 50) + 25;
-      enemy.y = -50; // Börja strax ovanför skärmen
-      enemy.hp = 20; // Fiende-HP
-      app.stage.addChild(enemy);
-      enemies.push(enemy);
-    }
-
-    // === Uppdatera fiender, kolla kollisioner, låt fiender skjuta ===
-    function updateEnemies() {
-      for (let i = enemies.length - 1; i >= 0; i--) {
-        const enemy = enemies[i];
-        enemy.y += ENEMY_SPEED;
-
-        // Låt fienden skjuta slumpmässigt
-        if (Math.random() < 0.01) {
-          shootEnemyBullet(enemy);
-        }
-
-        // Kolla om fienden krockar med en av spelarens kulor
-        for (let j = bullets.length - 1; j >= 0; j--) {
-          if (hitTest(bullets[j], enemy)) {
-            enemy.hp -= 10; // Fienden tar skada
-            // Ta bort kulan
-            app.stage.removeChild(bullets[j]);
-            bullets.splice(j, 1);
-            // Om fienden dör
-            if (enemy.hp <= 0) {
-              app.stage.removeChild(enemy);
-              enemies.splice(i, 1);
+        // === Hämta tangenttryckningar (WASD) ===
+        const onKeyDown = function (e) {
+            switch (e.code) {
+                case 'KeyW': moveForward = true; break;
+                case 'KeyS': moveBackward = true; break;
+                case 'KeyA': moveLeft = true; break;
+                case 'KeyD': moveRight = true; break;
             }
-            break; // Avbryt loopen för kulorna
-          }
+        };
+        const onKeyUp = function (e) {
+            switch (e.code) {
+                case 'KeyW': moveForward = false; break;
+                case 'KeyS': moveBackward = false; break;
+                case 'KeyA': moveLeft = false; break;
+                case 'KeyD': moveRight = false; break;
+            }
+        };
+        document.addEventListener('keydown', onKeyDown);
+        document.addEventListener('keyup', onKeyUp);
+
+        // === Markplan (stor plan-geometry) ===
+        const floorGeometry = new THREE.PlaneGeometry(200, 200);
+        const floorMaterial = new THREE.MeshPhongMaterial({ color: 0x228B22 });
+        const floorMesh = new THREE.Mesh(floorGeometry, floorMaterial);
+        floorMesh.rotation.x = -Math.PI / 2; // Lägg ner planet
+        floorMesh.receiveShadow = true;
+        scene.add(floorMesh);
+
+        // === Ett enkelt ljus för att se geometrier ordentligt ===
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+        dirLight.position.set(10, 30, 10);
+        scene.add(dirLight);
+
+        // === Fiender: kuber placerade runtom på planen ===
+        let enemies = [];
+        const enemyCount = 10;
+        for (let i = 0; i < enemyCount; i++) {
+            createEnemy();
         }
 
-        // Om fienden går utanför skärmen, ta bort den
-        if (enemy.y > app.screen.height + 100) {
-          app.stage.removeChild(enemy);
-          enemies.splice(i, 1);
+        function createEnemy() {
+            const geometry = new THREE.BoxGeometry(2, 2, 2);
+            const material = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+            const enemy = new THREE.Mesh(geometry, material);
+            enemy.position.set(
+                (Math.random() - 0.5) * 100,
+                1,
+                (Math.random() - 0.5) * 100
+            );
+            enemy.hp = 30;
+            enemies.push(enemy);
+            scene.add(enemy);
         }
-      }
-    }
 
-    // === Fienden skjuter en kula ===
-    function shootEnemyBullet(enemy) {
-      const bullet = new PIXI.Graphics();
-      bullet.beginFill(0xff9900);
-      bullet.drawCircle(0, 0, 5);
-      bullet.endFill();
-      bullet.x = enemy.x;
-      bullet.y = enemy.y + 50; // Nedanför fienden
-      app.stage.addChild(bullet);
-      enemyBullets.push(bullet);
-    }
+        // === Spelarens HP ===
+        let playerHP = 100;
+        document.getElementById('hp').innerText = `HP: ${playerHP}`;
 
-    // === En enkel AABB-kollision (rektangel-approx) för Pixi Graphics ===
-    function hitTest(a, b) {
-      // Hämta bounds
-      const ab = a.getBounds();
-      const bb = b.getBounds();
-      return ab.x + ab.width > bb.x &&
-             ab.x < bb.x + bb.width &&
-             ab.y + ab.height > bb.y &&
-             ab.y < bb.y + bb.height;
-    }
+        // === Skjut-funktion (vänster musknapp) ===
+        // Vi “raycastar” från kameran framåt för att träffa fiender
+        window.addEventListener("mousedown", (e) => {
+            if (e.button === 0) {
+                shoot();
+            }
+        });
 
-    // === Hantera Game Over ===
-    function gameOver() {
-      // Pausa spelet genom att stoppa ticker
-      app.ticker.stop();
+        function shoot() {
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
 
-      // Visa en enkel "Game Over"-text
-      const style = new PIXI.TextStyle({
-        fill: "#ff0000",
-        fontSize: 64,
-        fontWeight: "bold"
-      });
-      const gameOverText = new PIXI.Text("GAME OVER", style);
-      gameOverText.anchor.set(0.5);
-      gameOverText.x = app.screen.width / 2;
-      gameOverText.y = app.screen.height / 2;
-      app.stage.addChild(gameOverText);
-    }
+            const intersects = raycaster.intersectObjects(enemies);
+            if (intersects.length > 0) {
+                // Närmaste objekt (fiende)
+                const enemyHit = intersects[0].object;
+                enemyHit.hp -= 10;
+                // Ändra färg på fienden för att visa skada
+                enemyHit.material.color.setHex(0xff6666);
 
-    // === Gör att spelet skalar om ifall fönstret ändras ===
-    window.addEventListener('resize', () => {
-      app.renderer.resize(window.innerWidth, window.innerHeight);
-      background.width = app.screen.width;
-      background.height = app.screen.height;
-    });
+                // Om fienden dör
+                if (enemyHit.hp <= 0) {
+                    scene.remove(enemyHit);
+                    enemies = enemies.filter(e => e !== enemyHit);
+                }
+            }
+        }
 
-  </script>
+        // === Huvud-loopen (rendering + uppdatering) ===
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Endast om vi är “lockade” kan vi röra oss
+            if (controls.isLocked) {
+                // Rörelse vektor i kamerans lokala framåt-/höger-riktning
+                const direction = new THREE.Vector3();
+                const frontVector = new THREE.Vector3(0, 0, Number(moveBackward) - Number(moveForward));
+                const sideVector = new THREE.Vector3(Number(moveRight) - Number(moveLeft), 0, 0);
+
+                direction.subVectors(frontVector, sideVector).normalize().multiplyScalar(playerSpeed);
+                controls.moveRight(-direction.x);
+                controls.moveForward(-direction.z);
+            }
+
+            // Enkel ”AI”: Fiender kan sakta röra sig mot spelaren
+            enemies.forEach(enemy => {
+                // Riktning mot spelaren
+                const dx = camera.position.x - enemy.position.x;
+                const dz = camera.position.z - enemy.position.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                if (dist < 50) {
+                    // Fienden närmar sig spelaren
+                    enemy.position.x += (dx / dist) * 0.02;
+                    enemy.position.z += (dz / dist) * 0.02;
+
+                    // Om fienden är väldigt nära -> spelaren tar skada
+                    if (dist < 2) {
+                        playerHP -= 0.1;
+                        document.getElementById('hp').innerText = `HP: ${Math.floor(playerHP)}`;
+                        // Kolla om spelaren dör
+                        if (playerHP <= 0) {
+                            gameOver();
+                        }
+                    }
+                }
+            });
+
+            // Rendera scenen med kameran
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // === Game Over-funktion ===
+        function gameOver() {
+            // Avsluta animation
+            controls.unlock();
+            alert("GAME OVER");
+            // Här skulle man t.ex. kunna ladda om sidan
+            location.reload();
+        }
+
+        // === Anpassa scenen när fönstret ändras i storlek ===
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
 </body>
 </html>
